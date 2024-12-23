@@ -16,16 +16,7 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 PORT = int(os.getenv('PORT', 5050))
 
 SYSTEM_MESSAGE = (
-    "You are a helpful and knowledgeable assistant. Your role is to provide clear, accurate, "
-    "and friendly responses to any questions or topics the user brings up. You should:"
-    "\n- Give concise but thorough answers"
-    "\n- Be conversational and engaging"
-    "\n- Ask clarifying questions when needed"
-    "\n- Admit if you're unsure about something"
-    "\n- Stay professional while maintaining a warm tone"
-    "\n- Adapt your responses to the user's level of understanding"
-    "\n\nYou can discuss any topic, help solve problems, or engage in casual conversation. "
-    "Your goal is to make the interaction helpful and natural."
+    "You are a helpful and knowledgeable assistant. Your role is to provide clear, accurate, and friendly responses to any questions or topics the user brings up."
 )
 
 VOICE = 'alloy'
