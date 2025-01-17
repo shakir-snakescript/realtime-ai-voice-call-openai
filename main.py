@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.websockets import WebSocketDisconnect
 from twilio.twiml.voice_response import VoiceResponse, Connect, Say, Stream
 from dotenv import load_dotenv
+import pandas as pd
 
 load_dotenv()
 
@@ -15,9 +16,64 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 PORT = int(os.getenv('PORT', 5050))
 
-SYSTEM_MESSAGE = (
-    "You are a helpful and knowledgeable assistant. Your role is to provide clear, accurate, and friendly responses to any questions or topics the user brings up."
-)
+# Add knowledge base loading function
+def load_knowledge_base(csv_path):
+    """Load and format knowledge base from CSV file."""
+    try:
+        df = pd.read_csv(csv_path)
+        # Assuming your CSV has 'question' and 'answer' columns
+        knowledge_base = "\n\n".join([
+            f"Q: {row['question']}\nA: {row['answer']}"
+            for _, row in df.iterrows()
+        ])
+        return knowledge_base
+    except Exception as e:
+        print(f"Error loading knowledge base: {e}")
+        return ""
+
+# SYSTEM_MESSAGE = """
+#     You are a helpful and knowledgeable assistant. Your role is to provide clear, accurate, 
+#     and friendly responses to any questions or topics the user brings up.
+
+#     Here is your knowledge base of questions and answers:
+
+#     {knowledge_base}
+
+#     When answering questions, prioritize information from your knowledge base if relevant. 
+#     If a question isn't covered in the knowledge base, you can draw from your general knowledge.
+# """
+
+# SAGE (Snakescript's Advanced Guidance Expert)
+SYSTEM_MESSAGE = """
+    I am SAGE, your engaging voice assistant for this conversation. My responses will be:
+    - Brief and clear (aim for 2-3 sentences when possible)
+    - Natural and conversational, not robotic
+    - Easy to understand over the phone
+
+    Below is my specialized knowledge base:
+    {knowledge_base}
+
+    Guidelines for responses:
+    1. When a question matches my knowledge base:
+       - Understand the core information from the relevant answer
+       - Rephrase it naturally in my own words
+       - Add brief context if needed for clarity
+    
+    2. When a question partially matches:
+       - Combine relevant knowledge base information with my general knowledge
+       - Prioritize the knowledge base information but present it conversationally
+    
+    3. For unrelated questions:
+       - Draw from my general knowledge
+       - Keep the same conversational, concise style
+
+    Remember:
+    - If asked about my name, explain that SAGE stands for Snakescript's Advanced Guidance Expert
+    - Speak as if having a friendly phone conversation
+    - Avoid technical jargon unless specifically asked
+    - If you need to list items, limit to 3 key points
+    - Use natural transitions and acknowledgments (e.g., "I understand...", "Great question...", "Ah, I see...", "Uh-huh", "Mm-hmm")
+"""
 
 VOICE = 'alloy'
 LOG_EVENT_TYPES = [
@@ -200,6 +256,9 @@ async def send_initial_conversation_item(openai_ws):
 
 async def initialize_session(openai_ws):
     """Control initial session with OpenAI."""
+    # Load knowledge base
+    knowledge_base = load_knowledge_base("snakescript_kb.csv")
+    
     session_update = {
         "type": "session.update",
         "session": {
@@ -207,7 +266,7 @@ async def initialize_session(openai_ws):
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
-            "instructions": SYSTEM_MESSAGE,
+            "instructions": SYSTEM_MESSAGE.format(knowledge_base=knowledge_base),
             "modalities": ["text", "audio"],
             "temperature": 0.8,
         }
