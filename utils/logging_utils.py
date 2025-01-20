@@ -59,3 +59,9 @@ class CallLogger:
             "formatted_message": formatted_message,
             **details
         }
+
+    def read_call_log(self, call_sid: str) -> str:
+        """Read the log file for a specific call."""
+        log_file_path = f"logs/call_{call_sid}.log"
+        with open(log_file_path, 'r') as f:
+            return f.read()

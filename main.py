@@ -13,7 +13,10 @@ import logging
 from datetime import datetime
 from typing import List, Dict
 from utils.logging_utils import CallLogger
+from pathlib import Path
+import logging
 
+logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Configuration
@@ -103,12 +106,53 @@ async def index_page():
 
 @app.get("/logs", response_class=JSONResponse)
 async def get_logs():
-    """Return all call logs in a formatted way."""
-    formatted_logs = {
-        "total_calls": len(set(log['call_sid'] for log in call_logs if 'call_sid' in log)),
-        "logs": call_logs
+    """Return list of available log files."""
+    logs_dir = Path("logs")
+    
+    # Get all log files from the logs directory
+    log_files = []
+    for file in logs_dir.glob("*.log"):
+        try:
+            # Get file metadata
+            log_files.append({
+                "filename": file.name,
+                "call_sid": file.name.split('_')[1].replace('.log', ''),  # Extract call_sid from filename
+                "last_modified": datetime.fromtimestamp(os.path.getmtime(file)).isoformat(),
+                "size": os.path.getsize(file)
+            })
+        except Exception as e:
+            logger.error(f"Error processing log file {file}: {str(e)}")
+    
+    return {
+        "total_files": len(log_files),
+        "files": sorted(log_files, key=lambda x: x["last_modified"], reverse=True)
     }
-    return formatted_logs
+
+@app.get("/logs/{filename}", response_class=JSONResponse)
+async def get_log_content(filename: str):
+    """Return content of a specific log file."""
+    log_file = Path("logs") / filename
+    
+    try:
+        if not log_file.exists():
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"Log file {filename} not found"}
+            )
+            
+        with open(log_file, 'r') as f:
+            content = f.read()
+            
+        return {
+            "filename": filename,
+            "content": content,
+            "last_modified": datetime.fromtimestamp(os.path.getmtime(log_file)).isoformat()
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Error reading log file: {str(e)}"}
+        )
 
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request):
