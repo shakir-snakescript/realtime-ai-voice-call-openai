@@ -104,9 +104,9 @@ call_logs: List[Dict] = []
 async def index_page():
     return {"message": "Twilio Media Stream Server is running!"}
 
-@app.get("/logs", response_class=JSONResponse)
+@app.get("/logs", response_class=HTMLResponse)
 async def get_logs():
-    """Return list of available log files."""
+    """Return list of available log files in HTML format."""
     logs_dir = Path("logs")
     
     # Get all log files from the logs directory
@@ -116,42 +116,135 @@ async def get_logs():
             # Get file metadata
             log_files.append({
                 "filename": file.name,
-                "call_sid": file.name.split('_')[1].replace('.log', ''),  # Extract call_sid from filename
-                "last_modified": datetime.fromtimestamp(os.path.getmtime(file)).isoformat(),
-                "size": os.path.getsize(file)
+                "call_sid": file.name.split('_')[1].replace('.log', ''),
+                "last_modified": datetime.fromtimestamp(os.path.getmtime(file)).strftime("%Y-%m-%d %H:%M:%S"),
+                "size": f"{os.path.getsize(file) / 1024:.1f} KB"
             })
         except Exception as e:
             logger.error(f"Error processing log file {file}: {str(e)}")
     
-    return {
-        "total_files": len(log_files),
-        "files": sorted(log_files, key=lambda x: x["last_modified"], reverse=True)
-    }
+    # Sort files by last modified date (newest first)
+    log_files = sorted(log_files, key=lambda x: x["last_modified"], reverse=True)
+    
+    # Create HTML content with double curly braces for CSS
+    html_content = """
+    <html>
+        <head>
+            <title>Call Logs</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                h1 {{ color: #333; }}
+                table {{ border-collapse: collapse; width: 100%; }}
+                th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
+                th {{ background-color: #f5f5f5; }}
+                tr:hover {{ background-color: #f9f9f9; }}
+                a {{ color: #0066cc; text-decoration: none; }}
+                a:hover {{ text-decoration: underline; }}
+                .total {{ margin-bottom: 20px; color: #666; }}
+            </style>
+        </head>
+        <body>
+            <h1>Call Logs</h1>
+            <div class="total">Total Files: {total_files}</div>
+            <table>
+                <tr>
+                    <th>Filename</th>
+                    <th>Call SID</th>
+                    <th>Last Modified</th>
+                    <th>Size</th>
+                </tr>
+                {table_rows}
+            </table>
+        </body>
+    </html>
+    """
+    
+    # Generate table rows
+    table_rows = ""
+    for file in log_files:
+        table_rows += f"""
+            <tr>
+                <td><a href="/logs/{file['filename']}">{file['filename']}</a></td>
+                <td>{file['call_sid']}</td>
+                <td>{file['last_modified']}</td>
+                <td>{file['size']}</td>
+            </tr>
+        """
+    
+    return html_content.format(
+        total_files=len(log_files),
+        table_rows=table_rows
+    )
 
-@app.get("/logs/{filename}", response_class=JSONResponse)
+@app.get("/logs/{filename}", response_class=HTMLResponse)
 async def get_log_content(filename: str):
-    """Return content of a specific log file."""
+    """Return content of a specific log file in HTML format."""
     log_file = Path("logs") / filename
     
     try:
         if not log_file.exists():
-            return JSONResponse(
-                status_code=404,
-                content={"error": f"Log file {filename} not found"}
+            return HTMLResponse(
+                content="""
+                <html>
+                    <body>
+                        <h1>Error</h1>
+                        <p>Log file not found</p>
+                        <p><a href="/logs">Back to logs</a></p>
+                    </body>
+                </html>
+                """,
+                status_code=404
             )
             
         with open(log_file, 'r') as f:
             content = f.read()
-            
-        return {
-            "filename": filename,
-            "content": content,
-            "last_modified": datetime.fromtimestamp(os.path.getmtime(log_file)).isoformat()
-        }
+        
+        last_modified = datetime.fromtimestamp(os.path.getmtime(log_file)).strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Note the double curly braces for CSS
+        return f"""
+        <html>
+            <head>
+                <title>Log File: {filename}</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                    h1 {{ color: #333; }}
+                    .metadata {{ color: #666; margin-bottom: 20px; }}
+                    .content {{ 
+                        background-color: #f5f5f5;
+                        padding: 20px;
+                        border-radius: 5px;
+                        white-space: pre-wrap;
+                        font-family: monospace;
+                    }}
+                    .back-link {{ margin-top: 20px; }}
+                    a {{ color: #0066cc; text-decoration: none; }}
+                    a:hover {{ text-decoration: underline; }}
+                </style>
+            </head>
+            <body>
+                <h1>Log File: {filename}</h1>
+                <div class="metadata">Last Modified: {last_modified}</div>
+                <div class="content">{content}</div>
+                <div class="back-link">
+                    <a href="/logs">← Back to logs</a>
+                </div>
+            </body>
+        </html>
+        """
+        
     except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Error reading log file: {str(e)}"}
+        return HTMLResponse(
+            content=f"""
+            <html>
+                <body>
+                    <h1>Error</h1>
+                    <p>Error reading log file: {str(e)}</p>
+                    <p><a href="/logs">Back to logs</a></p>
+                </body>
+            </html>
+            """,
+            status_code=500
         )
 
 @app.api_route("/incoming-call", methods=["GET", "POST"])
