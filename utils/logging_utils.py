@@ -50,36 +50,80 @@ class CallLogger:
         elif event_type == "client_disconnected":
             return f"👋 Call ended (StreamSID: {details.get('stream_sid')})"
         elif event_type == "speech_detected":
-            return f"🗣️ User speaking detected"
+            return f"🗣️ User speaking detected (Duration: {details.get('duration', 'unknown')}ms)"
         elif event_type == "ai_response":
             return f"🤖 AI: {details.get('content', '')}"
         elif event_type == "user_speech":
             return f"👤 User: {details.get('content', '')}"
         elif event_type == "call_started":
-            return f"📱 Call initiated (CallSID: {details.get('call_sid')})"
+            return f"📱 Call initiated\n" \
+                   f"   CallSID: {details.get('call_sid')}\n" \
+                   f"   Timestamp: {details.get('timestamp')}\n" \
+                   f"   Initial Status: {details.get('status')}"
         elif event_type == "call_ended":
-            duration = details.get('duration', 'unknown')
-            status = details.get('status', 'completed')
-            return f"🔚 Call ended - Duration: {duration}s, Status: {status}"
+            return f"🔚 Call ended\n" \
+                   f"   Duration: {details.get('duration', 'unknown')}s\n" \
+                   f"   Final Status: {details.get('status')}\n" \
+                   f"   End Time: {timestamp}"
         elif event_type == "error":
-            return f"❌ Error: {details.get('message', 'Unknown error')}"
+            return f"❌ Error: {details.get('message', 'Unknown error')}\n" \
+                   f"   Details: {details.get('details', 'No additional details')}"
+        elif event_type == "websocket_connected":
+            return f"🌐 WebSocket Connected\n" \
+                   f"   Connection ID: {details.get('connection_id', 'unknown')}\n" \
+                   f"   Client IP: {details.get('client_ip', 'unknown')}"
+        elif event_type == "websocket_disconnected":
+            return f"🔌 WebSocket Disconnected\n" \
+                   f"   Connection ID: {details.get('connection_id', 'unknown')}\n" \
+                   f"   Duration: {details.get('duration', 'unknown')}s"
+        elif event_type == "media_received":
+            return f"📡 Media Chunk Received\n" \
+                   f"   Timestamp: {details.get('media', {}).get('timestamp', 'unknown')}\n" \
+                   f"   Size: {len(details.get('media', {}).get('payload', ''))} bytes"
+        elif event_type == "speech_started":
+            return f"🎤 Speech Started\n" \
+                   f"   Timestamp: {details.get('timestamp')}\n" \
+                   f"   Energy Level: {details.get('energy_level', 'unknown')}"
+        elif event_type == "speech_stopped":
+            return f"🛑 Speech Stopped\n" \
+                   f"   Duration: {details.get('duration', 'unknown')}ms\n" \
+                   f"   Final: {details.get('final', False)}"
+        elif event_type == "rate_limit":
+            return f"⚠️ Rate Limit Event\n" \
+                   f"   Type: {details.get('limit_type', 'unknown')}\n" \
+                   f"   Remaining: {details.get('remaining', 'unknown')}\n" \
+                   f"   Reset: {details.get('reset_at', 'unknown')}"
         else:
-            return f"ℹ️ {event_type}: {str(details)}"
+            return f"ℹ️ {event_type}:\n" \
+                   f"   Details: {str(details)}"
     
     def format_log_content(self, content: str) -> str:
         """Format log content for HTML display with sections."""
         sections = {
+            "Call Summary": [],
             "Call Information": [],
             "Conversation Transcript": [],
             "Technical Events": [],
+            "Media Events": [],
+            "Connection Events": [],
+            "Rate Limits": [],
             "Errors": []
         }
         
         for line in content.split('\n'):
             if '📞' in line or '📱' in line or '🔚' in line:
-                sections["Call Information"].append(line)
+                if '📱 Call initiated' in line:
+                    sections["Call Summary"].append(line)
+                else:
+                    sections["Call Information"].append(line)
             elif '👤' in line or '🤖' in line:
                 sections["Conversation Transcript"].append(line)
+            elif '📡' in line or '🎤' in line or '🛑' in line:
+                sections["Media Events"].append(line)
+            elif '🌐' in line or '🔌' in line:
+                sections["Connection Events"].append(line)
+            elif '⚠️' in line:
+                sections["Rate Limits"].append(line)
             elif '❌' in line:
                 sections["Errors"].append(line)
             else:

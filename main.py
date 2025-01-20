@@ -280,7 +280,10 @@ async def handle_incoming_call(request: Request):
 @app.websocket("/media-stream")
 async def handle_media_stream(websocket: WebSocket):
     """Handle WebSocket connections between Twilio and OpenAI."""
-    log_entry = call_logger.log_event("websocket_connected", {})
+    log_entry = call_logger.log_event("websocket_connected", {
+        "connection_id": websocket.client.host,
+        "client_ip": websocket.client.host
+    })
     call_logs.append(log_entry)
     
     logger.info("New WebSocket connection established")
@@ -315,6 +318,14 @@ async def handle_media_stream(websocket: WebSocket):
                             "audio": data['media']['payload']
                         }
                         await openai_ws.send(json.dumps(audio_append))
+                        log_entry = call_logger.log_event("media_received", {
+                            "media": {
+                                "timestamp": data['media'].get('timestamp'),
+                                "payload": data['media'].get('payload')
+                            },
+                            "stream_sid": stream_sid
+                        })
+                        call_logs.append(log_entry)
                     elif data['event'] == 'start':
                         stream_sid = data['start']['streamSid']
                         log_entry = call_logger.log_event("stream_started", {"stream_sid": stream_sid})
@@ -406,6 +417,30 @@ async def handle_media_stream(websocket: WebSocket):
                         if last_assistant_item:
                             print(f"Interrupting response with id: {last_assistant_item}")
                             await handle_speech_started_event()
+
+                    # For speech events
+                    if response.get('type') == 'input_audio_buffer.speech_started':
+                        log_entry = call_logger.log_event("speech_started", {
+                            "timestamp": datetime.now().isoformat(),
+                            "energy_level": response.get('energy_level')
+                        })
+                        call_logs.append(log_entry)
+
+                    if response.get('type') == 'input_audio_buffer.speech_stopped':
+                        log_entry = call_logger.log_event("speech_stopped", {
+                            "duration": response.get('duration'),
+                            "final": response.get('final', False)
+                        })
+                        call_logs.append(log_entry)
+
+                    # For rate limits
+                    if response.get('type') == 'rate_limits.updated':
+                        log_entry = call_logger.log_event("rate_limit", {
+                            "limit_type": response.get('limit_type'),
+                            "remaining": response.get('remaining'),
+                            "reset_at": response.get('reset_at')
+                        })
+                        call_logs.append(log_entry)
             except Exception as e:
                 print(f"Error in send_to_twilio: {e}")
 
