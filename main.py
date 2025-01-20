@@ -9,6 +9,10 @@ from fastapi.websockets import WebSocketDisconnect
 from twilio.twiml.voice_response import VoiceResponse, Connect, Say, Stream
 from dotenv import load_dotenv
 import pandas as pd
+import logging
+from datetime import datetime
+from typing import List, Dict
+from utils.logging_utils import CallLogger
 
 load_dotenv()
 
@@ -89,13 +93,33 @@ app = FastAPI()
 if not OPENAI_API_KEY:
     raise ValueError('Missing the OpenAI API key. Please set it in the .env file.')
 
+# Replace the existing logging setup with:
+call_logger = CallLogger()
+call_logs: List[Dict] = []
+
 @app.get("/", response_class=JSONResponse)
 async def index_page():
     return {"message": "Twilio Media Stream Server is running!"}
 
+@app.get("/logs", response_class=JSONResponse)
+async def get_logs():
+    """Return all call logs in a formatted way."""
+    formatted_logs = {
+        "total_calls": len(set(log['call_sid'] for log in call_logs if 'call_sid' in log)),
+        "logs": call_logs
+    }
+    return formatted_logs
+
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request):
     """Handle incoming call and return TwiML response to connect to Media Stream."""
+    call_sid = request.query_params.get('CallSid', 'unknown')
+    log_entry = call_logger.log_event("incoming_call", {"call_sid": call_sid})
+    call_logs.append(log_entry)
+    
+    # Create a new log file for this call
+    call_logger.create_call_log(call_sid)
+    
     response = VoiceResponse()
     response.say("Please wait while we connect your call to the AI voice assistant.")
     host = request.url.hostname
@@ -107,7 +131,10 @@ async def handle_incoming_call(request: Request):
 @app.websocket("/media-stream")
 async def handle_media_stream(websocket: WebSocket):
     """Handle WebSocket connections between Twilio and OpenAI."""
-    print("Client connected")
+    log_entry = call_logger.log_event("websocket_connected", {})
+    call_logs.append(log_entry)
+    
+    logger.info("New WebSocket connection established")
     await websocket.accept()
 
     async with websockets.connect(
@@ -141,7 +168,14 @@ async def handle_media_stream(websocket: WebSocket):
                         await openai_ws.send(json.dumps(audio_append))
                     elif data['event'] == 'start':
                         stream_sid = data['start']['streamSid']
-                        print(f"Incoming stream has started {stream_sid}")
+                        log_entry = call_logger.log_event("stream_started", {"stream_sid": stream_sid})
+                        call_logs.append(log_entry)
+                        logger.info(f"Stream started - StreamSid: {stream_sid}")
+                        call_logs.append({
+                            "timestamp": datetime.now().isoformat(),
+                            "event": "stream_started",
+                            "stream_sid": stream_sid
+                        })
                         response_start_timestamp_twilio = None
                         latest_media_timestamp = 0
                         last_assistant_item = None
@@ -149,7 +183,14 @@ async def handle_media_stream(websocket: WebSocket):
                         if mark_queue:
                             mark_queue.pop(0)
             except WebSocketDisconnect:
-                print("Client disconnected.")
+                log_entry = call_logger.log_event("client_disconnected", {"stream_sid": stream_sid})
+                call_logs.append(log_entry)
+                logger.info(f"Client disconnected - StreamSid: {stream_sid}")
+                call_logs.append({
+                    "timestamp": datetime.now().isoformat(),
+                    "event": "client_disconnected",
+                    "stream_sid": stream_sid
+                })
                 if openai_ws.open:
                     await openai_ws.close()
 
@@ -256,6 +297,7 @@ async def send_initial_conversation_item(openai_ws):
 
 async def initialize_session(openai_ws):
     """Control initial session with OpenAI."""
+    logger.info("Initializing OpenAI session")
     # Load knowledge base
     knowledge_base = load_knowledge_base("snakescript_kb.csv")
     
@@ -271,7 +313,7 @@ async def initialize_session(openai_ws):
             "temperature": 0.8,
         }
     }
-    print('Sending session update:', json.dumps(session_update))
+    logger.debug('Sending session update: %s', json.dumps(session_update))
     await openai_ws.send(json.dumps(session_update))
 
     # Uncomment the next line to have the AI speak first
