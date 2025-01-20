@@ -22,7 +22,7 @@ class CallLogger:
     def create_call_log(self, call_sid: str) -> str:
         """Create a new log file for a call and return the file path."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{timestamp}_{call_sid}.log"
+        filename = f"call_{timestamp}.log"
         filepath = os.path.join(self.logs_dir, filename)
         
         # Create file handler for this specific call
@@ -103,8 +103,6 @@ class CallLogger:
             "Call Summary": [],
             "Call Information": [],
             "Conversation Transcript": [],
-            "Technical Events": [],
-            "Media Events": [],
             "Connection Events": [],
             "Rate Limits": [],
             "Errors": []
@@ -118,16 +116,12 @@ class CallLogger:
                     sections["Call Information"].append(line)
             elif '👤' in line or '🤖' in line:
                 sections["Conversation Transcript"].append(line)
-            elif '📡' in line or '🎤' in line or '🛑' in line:
-                sections["Media Events"].append(line)
             elif '🌐' in line or '🔌' in line:
                 sections["Connection Events"].append(line)
             elif '⚠️' in line:
                 sections["Rate Limits"].append(line)
             elif '❌' in line:
                 sections["Errors"].append(line)
-            else:
-                sections["Technical Events"].append(line)
         
         formatted_content = []
         for section, lines in sections.items():
