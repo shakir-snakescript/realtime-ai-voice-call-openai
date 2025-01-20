@@ -22,13 +22,20 @@ class CallLogger:
     def create_call_log(self, call_sid: str) -> str:
         """Create a new log file for a call and return the file path."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{timestamp}.log"
+        filename = f"{timestamp}_{call_sid}.log"
         filepath = os.path.join(self.logs_dir, filename)
         
         # Create file handler for this specific call
         file_handler = logging.FileHandler(filepath)
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
         self.logger.addHandler(file_handler)
+        
+        # Log initial call information
+        self.log_event("call_started", {
+            "call_sid": call_sid,
+            "timestamp": datetime.now().isoformat(),
+            "status": "initiated"
+        })
         
         return filepath
     
@@ -45,14 +52,62 @@ class CallLogger:
         elif event_type == "speech_detected":
             return f"🗣️ User speaking detected"
         elif event_type == "ai_response":
-            return f"🤖 AI responding: {details.get('content', '')}"
+            return f"🤖 AI: {details.get('content', '')}"
+        elif event_type == "user_speech":
+            return f"👤 User: {details.get('content', '')}"
+        elif event_type == "call_started":
+            return f"📱 Call initiated (CallSID: {details.get('call_sid')})"
+        elif event_type == "call_ended":
+            duration = details.get('duration', 'unknown')
+            status = details.get('status', 'completed')
+            return f"🔚 Call ended - Duration: {duration}s, Status: {status}"
+        elif event_type == "error":
+            return f"❌ Error: {details.get('message', 'Unknown error')}"
         else:
             return f"ℹ️ {event_type}: {str(details)}"
     
+    def format_log_content(self, content: str) -> str:
+        """Format log content for HTML display with sections."""
+        sections = {
+            "Call Information": [],
+            "Conversation Transcript": [],
+            "Technical Events": [],
+            "Errors": []
+        }
+        
+        for line in content.split('\n'):
+            if '📞' in line or '📱' in line or '🔚' in line:
+                sections["Call Information"].append(line)
+            elif '👤' in line or '🤖' in line:
+                sections["Conversation Transcript"].append(line)
+            elif '❌' in line:
+                sections["Errors"].append(line)
+            else:
+                sections["Technical Events"].append(line)
+        
+        formatted_content = []
+        for section, lines in sections.items():
+            if lines:
+                formatted_content.extend([
+                    f"\n=== {section} ===\n",
+                    "\n".join(lines),
+                    "\n"
+                ])
+        
+        return "\n".join(formatted_content)
+
     def log_event(self, event_type: str, details: Dict):
         """Log an event both to file and memory."""
         formatted_message = self.format_event(event_type, details)
         self.logger.info(formatted_message)
+        
+        # Add call status for certain events
+        if event_type == "client_disconnected":
+            self.log_event("call_ended", {
+                "call_sid": details.get('call_sid'),
+                "duration": details.get('duration', 'unknown'),
+                "status": "completed"
+            })
         
         return {
             "timestamp": datetime.now().isoformat(),

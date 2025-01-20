@@ -15,6 +15,7 @@ from typing import List, Dict
 from utils.logging_utils import CallLogger
 from pathlib import Path
 import logging
+import html
 
 logger = logging.getLogger(__name__)
 load_dotenv()
@@ -199,9 +200,10 @@ async def get_log_content(filename: str):
         with open(log_file, 'r') as f:
             content = f.read()
         
+        # Format the content with sections
+        formatted_content = call_logger.format_log_content(content)
         last_modified = datetime.fromtimestamp(os.path.getmtime(log_file)).strftime("%Y-%m-%d %H:%M:%S")
         
-        # Note the double curly braces for CSS
         return f"""
         <html>
             <head>
@@ -209,6 +211,7 @@ async def get_log_content(filename: str):
                 <style>
                     body {{ font-family: Arial, sans-serif; margin: 20px; }}
                     h1 {{ color: #333; }}
+                    h2 {{ color: #666; margin-top: 30px; }}
                     .metadata {{ color: #666; margin-bottom: 20px; }}
                     .content {{ 
                         background-color: #f5f5f5;
@@ -217,6 +220,15 @@ async def get_log_content(filename: str):
                         white-space: pre-wrap;
                         font-family: monospace;
                     }}
+                    .transcript {{ 
+                        background-color: #fff;
+                        border: 1px solid #ddd;
+                        margin: 10px 0;
+                        padding: 15px;
+                    }}
+                    .user-message {{ color: #2c5282; }}
+                    .ai-message {{ color: #2b6cb0; }}
+                    .error {{ color: #c53030; }}
                     .back-link {{ margin-top: 20px; }}
                     a {{ color: #0066cc; text-decoration: none; }}
                     a:hover {{ text-decoration: underline; }}
@@ -225,7 +237,7 @@ async def get_log_content(filename: str):
             <body>
                 <h1>Log File: {filename}</h1>
                 <div class="metadata">Last Modified: {last_modified}</div>
-                <div class="content">{content}</div>
+                <div class="content">{formatted_content}</div>
                 <div class="back-link">
                     <a href="/logs">← Back to logs</a>
                 </div>
@@ -337,8 +349,34 @@ async def handle_media_stream(websocket: WebSocket):
             try:
                 async for openai_message in openai_ws:
                     response = json.loads(openai_message)
+                    
+                    # Log all important events
                     if response['type'] in LOG_EVENT_TYPES:
                         print(f"Received event: {response['type']}", response)
+                    
+                    # Log transcripts and AI responses
+                    if response.get('type') == 'response.content.part':
+                        log_entry = call_logger.log_event(
+                            "ai_response",
+                            {
+                                "content": response.get('content', ''),
+                                "stream_sid": stream_sid,
+                                "timestamp": datetime.now().isoformat()
+                            }
+                        )
+                        call_logs.append(log_entry)
+                    
+                    elif response.get('type') == 'input_audio_buffer.speech_stopped':
+                        if response.get('text'):
+                            log_entry = call_logger.log_event(
+                                "user_speech",
+                                {
+                                    "content": response.get('text', ''),
+                                    "stream_sid": stream_sid,
+                                    "timestamp": datetime.now().isoformat()
+                                }
+                            )
+                            call_logs.append(log_entry)
 
                     if response.get('type') == 'response.audio.delta' and 'delta' in response:
                         audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
