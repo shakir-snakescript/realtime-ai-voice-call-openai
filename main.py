@@ -39,18 +39,6 @@ def load_knowledge_base(csv_path):
         print(f"Error loading knowledge base: {e}")
         return ""
 
-# SYSTEM_MESSAGE = """
-#     You are a helpful and knowledgeable assistant. Your role is to provide clear, accurate, 
-#     and friendly responses to any questions or topics the user brings up.
-
-#     Here is your knowledge base of questions and answers:
-
-#     {knowledge_base}
-
-#     When answering questions, prioritize information from your knowledge base if relevant. 
-#     If a question isn't covered in the knowledge base, you can draw from your general knowledge.
-# """
-
 # SAGE (Snakescript's Advanced Guidance Expert)
 SYSTEM_MESSAGE = """
     I am SAGE, your engaging voice assistant for this conversation. My responses will be:
@@ -494,7 +482,7 @@ async def send_initial_conversation_item(openai_ws):
             "content": [
                 {
                     "type": "input_text",
-                    "text": "Hello there! How can I help you today?"
+                    "text": "Welcome to Snakescript. I am Sage, an AI empowered agent. How can I help you today?"
                 }
             ]
         }
@@ -524,8 +512,8 @@ async def initialize_session(openai_ws):
     logger.debug('Sending session update: %s', json.dumps(session_update))
     await openai_ws.send(json.dumps(session_update))
 
-    # Uncomment the next line to have the AI speak first
-    # await send_initial_conversation_item(openai_ws)
+    # Have the AI speak first with the welcome message
+    await send_initial_conversation_item(openai_ws)
 
 if __name__ == "__main__":
     import uvicorn
