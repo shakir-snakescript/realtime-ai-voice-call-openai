@@ -150,7 +150,6 @@ async def get_logs():
             <table>
                 <tr>
                     <th>Filename</th>
-                    <th>Call SID</th>
                     <th>Last Modified</th>
                     <th>Size</th>
                 </tr>
@@ -166,7 +165,6 @@ async def get_logs():
         table_rows += f"""
             <tr>
                 <td><a href="/logs/{file['filename']}">{file['filename']}</a></td>
-                <td>{file['call_sid']}</td>
                 <td>{file['last_modified']}</td>
                 <td>{file['size']}</td>
             </tr>
