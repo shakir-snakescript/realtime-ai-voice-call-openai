@@ -4,20 +4,15 @@ import base64
 import asyncio
 import websockets
 from fastapi import FastAPI, WebSocket, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.websockets import WebSocketDisconnect
-from twilio.twiml.voice_response import VoiceResponse, Connect, Say, Stream
-from dotenv import load_dotenv
+from twilio.twiml.voice_response import VoiceResponse, Connect
 import pandas as pd
+from dotenv import load_dotenv
 import logging
 from datetime import datetime
-from typing import List, Dict
-from utils.logging_utils import CallLogger
-from pathlib import Path
-import logging
-import html
+import glob
 
-logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Configuration
@@ -40,7 +35,8 @@ def load_knowledge_base(csv_path):
         return ""
 
 # SAGE (Snakescript's Advanced Guidance Expert)
-SYSTEM_MESSAGE = """
+SYSTEM_MESSAGE = (
+    """
     I am SAGE, your engaging voice assistant for this conversation. My responses will be:
     - Brief and clear (aim for 2-3 sentences when possible)
     - Natural and conversational, not robotic
@@ -69,7 +65,8 @@ SYSTEM_MESSAGE = """
     - Avoid technical jargon unless specifically asked
     - If you need to list items, limit to 3 key points
     - Use natural transitions and acknowledgments (e.g., "I understand...", "Great question...", "Ah, I see...", "Uh-huh", "Mm-hmm")
-"""
+    """
+)
 
 VOICE = 'alloy'
 LOG_EVENT_TYPES = [
@@ -85,199 +82,125 @@ app = FastAPI()
 if not OPENAI_API_KEY:
     raise ValueError('Missing the OpenAI API key. Please set it in the .env file.')
 
-# Replace the existing logging setup with:
-call_logger = CallLogger()
-call_logs: List[Dict] = []
-
 @app.get("/", response_class=JSONResponse)
 async def index_page():
     return {"message": "Twilio Media Stream Server is running!"}
 
-@app.get("/logs", response_class=HTMLResponse)
-async def get_logs():
-    """Return list of available log files in HTML format."""
-    logs_dir = Path("logs")
-    
-    # Get all log files from the logs directory
-    log_files = []
-    for file in logs_dir.glob("*.log"):
-        try:
-            # Get file metadata
-            log_files.append({
-                "filename": file.name,
-                "call_sid": file.name.split('_')[1].replace('.log', ''),
-                "last_modified": datetime.fromtimestamp(os.path.getmtime(file)).strftime("%Y-%m-%d %H:%M:%S"),
-                "size": f"{os.path.getsize(file) / 1024:.1f} KB"
-            })
-        except Exception as e:
-            logger.error(f"Error processing log file {file}: {str(e)}")
-    
-    # Sort files by last modified date (newest first)
-    log_files = sorted(log_files, key=lambda x: x["last_modified"], reverse=True)
-    
-    # Create HTML content with double curly braces for CSS
-    html_content = """
-    <html>
-        <head>
-            <title>Call Logs</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                h1 {{ color: #333; }}
-                table {{ border-collapse: collapse; width: 100%; }}
-                th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
-                th {{ background-color: #f5f5f5; }}
-                tr:hover {{ background-color: #f9f9f9; }}
-                a {{ color: #0066cc; text-decoration: none; }}
-                a:hover {{ text-decoration: underline; }}
-                .total {{ margin-bottom: 20px; color: #666; }}
-            </style>
-        </head>
-        <body>
-            <h1>Call Logs</h1>
-            <div class="total">Total Files: {total_files}</div>
-            <table>
-                <tr>
-                    <th>Filename</th>
-                    <th>Last Modified</th>
-                    <th>Size</th>
-                </tr>
-                {table_rows}
-            </table>
-        </body>
-    </html>
-    """
-    
-    # Generate table rows
-    table_rows = ""
-    for file in log_files:
-        table_rows += f"""
-            <tr>
-                <td><a href="/logs/{file['filename']}">{file['filename']}</a></td>
-                <td>{file['last_modified']}</td>
-                <td>{file['size']}</td>
-            </tr>
-        """
-    
-    return html_content.format(
-        total_files=len(log_files),
-        table_rows=table_rows
-    )
-
-@app.get("/logs/{filename}", response_class=HTMLResponse)
-async def get_log_content(filename: str):
-    """Return content of a specific log file in HTML format."""
-    log_file = Path("logs") / filename
-    
-    try:
-        if not log_file.exists():
-            return HTMLResponse(
-                content="""
-                <html>
-                    <body>
-                        <h1>Error</h1>
-                        <p>Log file not found</p>
-                        <p><a href="/logs">Back to logs</a></p>
-                    </body>
-                </html>
-                """,
-                status_code=404
-            )
-            
-        with open(log_file, 'r') as f:
-            content = f.read()
-        
-        # Format the content with sections
-        formatted_content = call_logger.format_log_content(content)
-        last_modified = datetime.fromtimestamp(os.path.getmtime(log_file)).strftime("%Y-%m-%d %H:%M:%S")
-        
-        return f"""
-        <html>
-            <head>
-                <title>Log File: {filename}</title>
-                <style>
-                    body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                    h1 {{ color: #333; }}
-                    h2 {{ color: #666; margin-top: 30px; }}
-                    .metadata {{ color: #666; margin-bottom: 20px; }}
-                    .content {{ 
-                        background-color: #f5f5f5;
-                        padding: 20px;
-                        border-radius: 5px;
-                        white-space: pre-wrap;
-                        font-family: monospace;
-                    }}
-                    .transcript {{ 
-                        background-color: #fff;
-                        border: 1px solid #ddd;
-                        margin: 10px 0;
-                        padding: 15px;
-                    }}
-                    .user-message {{ color: #2c5282; }}
-                    .ai-message {{ color: #2b6cb0; }}
-                    .error {{ color: #c53030; }}
-                    .back-link {{ margin-top: 20px; }}
-                    a {{ color: #0066cc; text-decoration: none; }}
-                    a:hover {{ text-decoration: underline; }}
-                </style>
-            </head>
-            <body>
-                <h1>Log File: {filename}</h1>
-                <div class="metadata">Last Modified: {last_modified}</div>
-                <div class="content">{formatted_content}</div>
-                <div class="back-link">
-                    <a href="/logs">← Back to logs</a>
-                </div>
-            </body>
-        </html>
-        """
-        
-    except Exception as e:
-        return HTMLResponse(
-            content=f"""
-            <html>
-                <body>
-                    <h1>Error</h1>
-                    <p>Error reading log file: {str(e)}</p>
-                    <p><a href="/logs">Back to logs</a></p>
-                </body>
-            </html>
-            """,
-            status_code=500
-        )
-
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request):
     """Handle incoming call and return TwiML response to connect to Media Stream."""
-    call_sid = request.query_params.get('CallSid', 'unknown')
-    log_entry = call_logger.log_event("incoming_call", {"call_sid": call_sid})
-    call_logs.append(log_entry)
-    
-    # Create a new log file for this call
-    call_logger.create_call_log(call_sid)
-    
     response = VoiceResponse()
-    response.say("Please wait while we connect your call to the AI voice assistant.")
     host = request.url.hostname
     connect = Connect()
     connect.stream(url=f'wss://{host}/media-stream')
     response.append(connect)
     return HTMLResponse(content=str(response), media_type="application/xml")
 
+@app.get("/logs", response_class=HTMLResponse)
+async def get_logs():
+    """Return an HTML table of available log files."""
+    log_files = glob.glob('calls/*.log')
+    files_info = []
+    
+    for file_path in log_files:
+        stats = os.stat(file_path)
+        files_info.append({
+            'filename': os.path.basename(file_path),
+            'modified': datetime.fromtimestamp(stats.st_mtime),
+            'size': stats.st_size
+        })
+    
+    # Sort files by modified date (newest first)
+    files_info.sort(key=lambda x: x['modified'], reverse=True)
+    
+    # Convert size to human-readable format
+    def format_size(size):
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} TB"
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Call Logs</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                margin: 20px;
+            }}
+            h1 {{
+                color: #333;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 20px;
+            }}
+            th, td {{
+                padding: 12px;
+                text-align: left;
+                border-bottom: 1px solid #ddd;
+            }}
+            th {{
+                background-color: #f5f5f5;
+                font-weight: bold;
+            }}
+            tr:hover {{
+                background-color: #f9f9f9;
+            }}
+            .file-link {{
+                color: #0066cc;
+                text-decoration: none;
+            }}
+            .file-link:hover {{
+                text-decoration: underline;
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>Call Logs</h1>
+        <p>Total Files: {len(files_info)}</p>
+        <table>
+            <tr>
+                <th>Filename</th>
+                <th>Last Modified</th>
+                <th>Size</th>
+            </tr>
+            {''.join(f"""
+            <tr>
+                <td><a href="/logs/{file['filename']}" class="file-link">{file['filename']}</a></td>
+                <td>{file['modified'].strftime('%Y-%m-%d %H:%M:%S')}</td>
+                <td>{format_size(file['size'])}</td>
+            </tr>
+            """ for file in files_info)}
+        </table>
+    </body>
+    </html>
+    """
+    
+    return HTMLResponse(content=html_content)
+
+@app.get("/logs/{filename}")
+async def get_log_file(filename: str):
+    """Return the contents of a specific log file."""
+    file_path = f"calls/{filename}"
+    if os.path.exists(file_path):
+        return FileResponse(file_path)
+    return JSONResponse(content={"error": "Log file not found"}, status_code=404)
+
 @app.websocket("/media-stream")
 async def handle_media_stream(websocket: WebSocket):
     """Handle WebSocket connections between Twilio and OpenAI."""
-    log_entry = call_logger.log_event("websocket_connected", {
-        "connection_id": websocket.client.host,
-        "client_ip": websocket.client.host
-    })
-    call_logs.append(log_entry)
-    
-    logger.info("New WebSocket connection established")
+    print("Client connected")
     await websocket.accept()
+    logger = None  # Initialize logger variable
 
     async with websockets.connect(
-        'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
-        extra_headers={
+        'wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17',
+        additional_headers={
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "OpenAI-Beta": "realtime=v1"
         }
@@ -293,52 +216,35 @@ async def handle_media_stream(websocket: WebSocket):
         
         async def receive_from_twilio():
             """Receive audio data from Twilio and send it to the OpenAI Realtime API."""
-            nonlocal stream_sid, latest_media_timestamp
+            nonlocal stream_sid, latest_media_timestamp, logger
             try:
                 async for message in websocket.iter_text():
                     data = json.loads(message)
-                    if data['event'] == 'media' and openai_ws.open:
+                    if data['event'] == 'media':
                         latest_media_timestamp = int(data['media']['timestamp'])
                         audio_append = {
                             "type": "input_audio_buffer.append",
                             "audio": data['media']['payload']
                         }
                         await openai_ws.send(json.dumps(audio_append))
-                        log_entry = call_logger.log_event("media_received", {
-                            "media": {
-                                "timestamp": data['media'].get('timestamp'),
-                                "payload": data['media'].get('payload')
-                            },
-                            "stream_sid": stream_sid
-                        })
-                        call_logs.append(log_entry)
                     elif data['event'] == 'start':
                         stream_sid = data['start']['streamSid']
-                        log_entry = call_logger.log_event("stream_started", {"stream_sid": stream_sid})
-                        call_logs.append(log_entry)
-                        logger.info(f"Stream started - StreamSid: {stream_sid}")
-                        call_logs.append({
-                            "timestamp": datetime.now().isoformat(),
-                            "event": "stream_started",
-                            "stream_sid": stream_sid
-                        })
+                        logger = setup_logging(stream_sid)
+                        logger.info(f"Incoming stream started: {stream_sid}")
+                        print(f"Incoming stream has started {stream_sid}")
                         response_start_timestamp_twilio = None
                         latest_media_timestamp = 0
                         last_assistant_item = None
                     elif data['event'] == 'mark':
+                        if logger:
+                            logger.info(f"Mark event received: {data}")
                         if mark_queue:
                             mark_queue.pop(0)
             except WebSocketDisconnect:
-                log_entry = call_logger.log_event("client_disconnected", {"stream_sid": stream_sid})
-                call_logs.append(log_entry)
-                logger.info(f"Client disconnected - StreamSid: {stream_sid}")
-                call_logs.append({
-                    "timestamp": datetime.now().isoformat(),
-                    "event": "client_disconnected",
-                    "stream_sid": stream_sid
-                })
-                if openai_ws.open:
-                    await openai_ws.close()
+                if logger:
+                    logger.info("Client disconnected.")
+                print("Client disconnected.")
+                await openai_ws.close()
 
         async def send_to_twilio():
             """Receive events from the OpenAI Realtime API, send audio back to Twilio."""
@@ -346,34 +252,10 @@ async def handle_media_stream(websocket: WebSocket):
             try:
                 async for openai_message in openai_ws:
                     response = json.loads(openai_message)
-                    
-                    # Log all important events
                     if response['type'] in LOG_EVENT_TYPES:
+                        if logger:
+                            logger.info(f"OpenAI event: {response['type']}", extra=response)
                         print(f"Received event: {response['type']}", response)
-                    
-                    # Log transcripts and AI responses
-                    if response.get('type') == 'response.content.part':
-                        log_entry = call_logger.log_event(
-                            "ai_response",
-                            {
-                                "content": response.get('content', ''),
-                                "stream_sid": stream_sid,
-                                "timestamp": datetime.now().isoformat()
-                            }
-                        )
-                        call_logs.append(log_entry)
-                    
-                    elif response.get('type') == 'input_audio_buffer.speech_stopped':
-                        if response.get('text'):
-                            log_entry = call_logger.log_event(
-                                "user_speech",
-                                {
-                                    "content": response.get('text', ''),
-                                    "stream_sid": stream_sid,
-                                    "timestamp": datetime.now().isoformat()
-                                }
-                            )
-                            call_logs.append(log_entry)
 
                     if response.get('type') == 'response.audio.delta' and 'delta' in response:
                         audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
@@ -403,31 +285,9 @@ async def handle_media_stream(websocket: WebSocket):
                         if last_assistant_item:
                             print(f"Interrupting response with id: {last_assistant_item}")
                             await handle_speech_started_event()
-
-                    # For speech events
-                    if response.get('type') == 'input_audio_buffer.speech_started':
-                        log_entry = call_logger.log_event("speech_started", {
-                            "timestamp": datetime.now().isoformat(),
-                            "energy_level": response.get('energy_level')
-                        })
-                        call_logs.append(log_entry)
-
-                    if response.get('type') == 'input_audio_buffer.speech_stopped':
-                        log_entry = call_logger.log_event("speech_stopped", {
-                            "duration": response.get('duration'),
-                            "final": response.get('final', False)
-                        })
-                        call_logs.append(log_entry)
-
-                    # For rate limits
-                    if response.get('type') == 'rate_limits.updated':
-                        log_entry = call_logger.log_event("rate_limit", {
-                            "limit_type": response.get('limit_type'),
-                            "remaining": response.get('remaining'),
-                            "reset_at": response.get('reset_at')
-                        })
-                        call_logs.append(log_entry)
             except Exception as e:
+                if logger:
+                    logger.error(f"Error in send_to_twilio: {e}")
                 print(f"Error in send_to_twilio: {e}")
 
         async def handle_speech_started_event():
@@ -482,7 +342,7 @@ async def send_initial_conversation_item(openai_ws):
             "content": [
                 {
                     "type": "input_text",
-                    "text": "Welcome to Snakescript. I am Sage, an AI empowered agent. How can I help you today?"
+                    "text": "Greet the user with 'Welcome to Snakescript. I am Sage, an AI empowered agent. How can I help you today?'"
                 }
             ]
         }
@@ -493,10 +353,8 @@ async def send_initial_conversation_item(openai_ws):
 
 async def initialize_session(openai_ws):
     """Control initial session with OpenAI."""
-    logger.info("Initializing OpenAI session")
-    # Load knowledge base
     knowledge_base = load_knowledge_base("snakescript_kb.csv")
-    
+
     session_update = {
         "type": "session.update",
         "session": {
@@ -509,11 +367,31 @@ async def initialize_session(openai_ws):
             "temperature": 0.8,
         }
     }
-    logger.debug('Sending session update: %s', json.dumps(session_update))
+    print('Sending session update:', json.dumps(session_update))
     await openai_ws.send(json.dumps(session_update))
-
-    # Have the AI speak first with the welcome message
+    
+    # Add a small delay to ensure session is initialized
+    await asyncio.sleep(0.5)
+    
+    # Always send initial greeting
     await send_initial_conversation_item(openai_ws)
+
+# Add logging configuration
+def setup_logging(stream_sid):
+    """Setup logging for a specific call stream."""
+    log_filename = f"calls/{datetime.now().strftime('%Y%m%d')}_{stream_sid}.log"
+    os.makedirs('calls', exist_ok=True)
+    
+    logger = logging.getLogger(stream_sid)
+    logger.setLevel(logging.INFO)
+    
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    
+    file_handler = logging.FileHandler(log_filename)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    return logger
 
 if __name__ == "__main__":
     import uvicorn
